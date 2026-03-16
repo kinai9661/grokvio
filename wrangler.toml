@@ -1,0 +1,14 @@
+name = "ximagine-2api"
+main = "worker.js"
+compatibility_date = "2024-03-01"
+workers_dev = true
+
+[vars]
+# 覆蓋預設 API_MASTER_KEY，建議於 Cloudflare Dashboard 中設定真正的密鑰
+API_MASTER_KEY = "1"
+
+[[kv_namespaces]]
+binding = "HISTORY_LOGS"
+# 將下列 ID/preview_id 換成實際的 KV Namespace ID
+id = "00000000000000000000000000000000"
+preview_id = "00000000000000000000000000000000"
