@@ -366,41 +366,41 @@ function handleUI(request, apiKey) {
  <style>
  :root { --bg: #080808; --panel: #161616; --border: #2e2e2e; --text: #f3f3f3; --primary: #ffbf00; --accent: #4ad0ff; --muted: #7a7a7a; }
  * { box-sizing: border-box; }
- body { font-family: 'Segoe UI', sans-serif; margin:0; min-height:100vh; background: var(--bg); color: var(--text); display:flex; }
- .sidebar { width:360px; background: var(--panel); border-right:1px solid var(--border); padding:20px; display:flex; flex-direction:column; gap:16px; overflow-y:auto; }
- .main { flex:1; padding:20px; display:flex; flex-direction:column; gap:20px; }
- .box { background:#1f1f1f; border-radius:12px; border:1px solid var(--border); padding:16px; }
- .label { font-size:12px; color:var(--muted); margin-bottom:8px; display:block; }
- .code-block { font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--primary); background:#090909; padding:10px; border-radius:6px; border:1px solid #111; cursor:pointer; }
- input, select, textarea { width:100%; background:#111; border:1px solid var(--border); color:#fff; padding:10px; border-radius:8px; font-size:14px; }
- textarea { resize:vertical; min-height:90px; }
- button { width:100%; padding:12px; margin-top:10px; border:none; border-radius:8px; font-weight:600; background:var(--primary); color:#000; cursor:pointer; }
- button:disabled { background:#434343; cursor:not-allowed; }
- .chat-window { flex:1; background:#020202; border:1px solid var(--border); border-radius:16px; padding:24px; display:flex; flex-direction:column; gap:16px; overflow-y:auto; }
+ body { font-family: 'Segoe UI', sans-serif; margin:0; min-height:100vh; background: var(--bg); color: var(--text); display: flex; }
+ .sidebar { width:360px; background: var(--panel); border-right:1px solid var(--border); padding:20px; display: flex; flex-direction: column; gap:16px; overflow-y: auto; }
+ .main { flex:1; padding:20px; display: flex; flex-direction: column; gap:20px; }
+ .box { background: #1f1f1f; border-radius:12px; border:1px solid var(--border); padding:16px; }
+ .label { font-size:12px; color: var(--muted); margin-bottom:8px; display: block; }
+ .code-block { font-family: 'JetBrains Mono', monospace; font-size:12px; color: var(--primary); background: #090909; padding:10px; border-radius:6px; border:1px solid #111; cursor: pointer; }
+ input, select, textarea { width:100%; background: #111; border:1px solid var(--border); color: #fff; padding:10px; border-radius:8px; font-size:14px; }
+ textarea { resize: vertical; min-height:90px; }
+ button { width:100%; padding:12px; margin-top:10px; border: none; border-radius:8px; font-weight:600; background: var(--primary); color: #000; cursor: pointer; }
+ button:disabled { background: #434343; cursor: not-allowed; }
+ .chat-window { flex:1; background: #020202; border:1px solid var(--border); border-radius:16px; padding:24px; display: flex; flex-direction: column; gap:16px; overflow-y: auto; }
  .msg { max-width:80%; padding:12px16px; border-radius:14px; line-height:1.5; }
- .msg.user { align-self:flex-end; background:#1b1b1b; border:1px solid #2b2b2b; }
- .msg.ai { align-self:flex-start; background:#111; border:1px solid var(--border); width:100%; }
- .progress-bar { width:100%; height:5px; background:#151515; border-radius:4px; overflow:hidden; margin-top:8px; }
- .progress-fill { height:100%; background:var(--primary); width:0; transition:width .3s ease; }
- video { width:100%; border-radius:10px; margin-top:12px; background:#000; }
- .download-link { display:inline-block; margin-top:6px; color:var(--accent); font-size:13px; }
- .log-panel { background:#121212; border-radius:16px; border:1px solid var(--border); padding:20px; display:flex; flex-direction:column; gap:16px; }
- .log-header { display:flex; justify-content:space-between; align-items:center; font-size:14px; }
- .log-list { display:flex; flex-direction:column; gap:12px; max-height:280px; overflow-y:auto; }
- .log-entry { border-radius:12px; border:1px solid #222; padding:12px14px; background:#0d0d0d; display:flex; flex-direction:column; gap:6px; }
- .log-meta { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
- .status-tag { padding:2px8px; border-radius:999px; border:1px solid rgba(255,255,255,0.2); font-size:11px; text-transform:uppercase; letter-spacing:0.04em; }
- .log-prompt { font-size:13px; color:#f5f5f5; }
- .log-details { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; color:#a5a5a5; }
- .log-details span { padding:3px8px; border-radius:6px; border:1px solid #222; background:#080808; }
- .log-note { font-size:12px; color:#61dafb; }
- .log-actions a { color:var(--accent); font-size:12px; text-decoration:none; }
- .ready-copy { color:var(--muted); text-align:center; margin-top:60px; font-size:14px; }
+ .msg.user { align-self: flex-end; background: #1b1b1b; border:1px solid #2b2b2b; }
+ .msg.ai { align-self: flex-start; background: #111; border:1px solid var(--border); width:100%; }
+ .progress-bar { width:100%; height:5px; background: #151515; border-radius:4px; overflow: hidden; margin-top:8px; }
+ .progress-fill { height:100%; background: var(--primary); width:0; transition: width0.3s ease; }
+ video { width:100%; border-radius:10px; margin-top:12px; background: #000; }
+ .download-link { display: inline-block; margin-top:6px; color: var(--accent); font-size:13px; }
+ .log-panel { background: #121212; border-radius:16px; border:1px solid var(--border); padding:20px; display: flex; flex-direction: column; gap:16px; }
+ .log-header { display: flex; justify-content: space-between; align-items: center; font-size:14px; }
+ .log-list { display: flex; flex-direction: column; gap:12px; max-height:280px; overflow-y: auto; }
+ .log-entry { border-radius:12px; border:1px solid #222; padding:12px14px; background: #0d0d0d; display: flex; flex-direction: column; gap:6px; }
+ .log-meta { display: flex; justify-content: space-between; font-size:12px; color: var(--muted); }
+ .status-tag { padding:2px8px; border-radius:999px; border:1px solid rgba(255,255,255,0.2); font-size:11px; text-transform: uppercase; letter-spacing:0.04em; }
+ .log-prompt { font-size:13px; color: #f5f5f5; }
+ .log-details { display: flex; gap:8px; flex-wrap: wrap; font-size:12px; color: #a5a5a5; }
+ .log-details span { padding:3px8px; border-radius:6px; border:1px solid #222; background: #080808; }
+ .log-note { font-size:12px; color: #61dafb; }
+ .log-actions a { color: var(--accent); font-size:12px; text-decoration: none; }
+ .ready-copy { color: var(--muted); text-align: center; margin-top:60px; font-size:14px; }
  </style>
 </head>
 <body>
  <div class="sidebar">
- <h2 style="margin:0;">🎬 ${CONFIG.PROJECT_NAME} <span style="font-size:12px;color:#888;">v${CONFIG.PROJECT_VERSION}</span></h2>
+ <h2 style="margin:0;">🎬 ${CONFIG.PROJECT_NAME} <span style="font-size:12px; color: #888;">v${CONFIG.PROJECT_VERSION}</span></h2>
  <div class="box">
  <span class="label" data-i18n-key="languageLabel">界面语言</span>
  <select id="lang">
@@ -415,12 +415,12 @@ function handleUI(request, apiKey) {
  <div class="box">
  <span class="label" data-i18n-key="apiAddressLabel">API 接口地址 (OpenAI兼容)</span>
  <div class="code-block" onclick="copyToClipboard('${origin}/v1/chat/completions')">${origin}/v1/chat/completions</div>
- <div class="api-ref" style="margin-top:6px; font-size:12px; color:var(--muted);">支持 <span style="color:var(--primary);">LobeChat</span>, <span style="color:var(--primary);">NextChat</span></div>
+ <div class="api-ref" style="margin-top:6px; font-size:12px; color: var(--muted);">支持 <span style="color: var(--primary);">LobeChat</span>, <span style="color: var(--primary);">NextChat</span></div>
  </div>
  <div class="box">
  <span class="label" data-i18n-key="comfyLabel">ComfyUI / 绘图接口</span>
  <div class="code-block" onclick="copyToClipboard('${origin}/v1/images/generations')">${origin}/v1/images/generations</div>
- <div class="api-url" style="margin-top:6px; font-size:12px; color:var(--muted);">POST JSON: { prompt, model, size }</div>
+ <div class="api-url" style="margin-top:6px; font-size:12px; color: var(--muted);">POST JSON: { prompt, model, size }</div>
  </div>
  <div class="box">
  <span class="label" data-i18n-key="modeLabel">风格模式 (Mode)</span>
@@ -548,7 +548,7 @@ function handleUI(request, apiKey) {
 
  function appendMsg(role, html) {
  const wrapper = document.createElement('div');
- wrapper.className = `msg ${role}`;
+ wrapper.className = 'msg ' + role;
  wrapper.innerHTML = html;
  const chat = document.getElementById('chat');
  chat.appendChild(wrapper);
@@ -624,7 +624,7 @@ function handleUI(request, apiKey) {
 
  function addLogEntry(payload) {
  const record = {
- id: `log-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+ id: 'log-' + Date.now() + '-' + Math.random().toString(36).slice(2,8),
  prompt: payload.prompt,
  mode: payload.mode,
  ratio: payload.ratio,
@@ -643,8 +643,7 @@ function handleUI(request, apiKey) {
  const entry = videoLog.find(item => item.id === id);
  if (!entry) return;
  Object.assign(entry, updates);
- if (updates.time) entry.time = updates.time;
- else entry.time = Date.now();
+ entry.time = updates.time || Date.now();
  renderVideoLog();
  }
 
@@ -653,6 +652,8 @@ function handleUI(request, apiKey) {
  currentLang = lang;
  strings = I18N[lang];
  document.documentElement.lang = lang;
+ const select = document.getElementById('lang');
+ if (select) select.value = lang;
  document.querySelectorAll('[data-i18n-key]').forEach(el => {
  const key = el.getAttribute('data-i18n-key');
  if (strings[key]) el.textContent = strings[key];
@@ -682,25 +683,25 @@ function handleUI(request, apiKey) {
  const readyWrapper = document.getElementById('ready-wrapper');
  if (readyWrapper) readyWrapper.remove();
  const logId = addLogEntry({ prompt, mode, ratio });
- appendMsg('user', `${prompt}<br><small style="color:#888;">[${mode} | ${ratio}]</small>`);
- const aiMsg = appendMsg('ai', `<div>${strings.progressInitializing}</div><div class="progress-bar"><div class="progress-fill"></div></div>`);
+ appendMsg('user', prompt + '<br><small style="color:#888;">[' + mode + ' | ' + ratio + ']</small>');
+ const aiMsg = appendMsg('ai', '<div>' + strings.progressInitializing + '</div><div class="progress-bar"><div class="progress-fill"></div></div>');
  const statusDiv = aiMsg.querySelector('div');
  const fill = aiMsg.querySelector('.progress-fill');
  try {
  const payload = {
- model: `grok-imagine-${mode}`,
+ model: 'grok-imagine-' + mode,
  messages: [{
  role: 'user',
  content: JSON.stringify({
- prompt,
- mode,
+ prompt: prompt,
+ mode: mode,
  aspectRatio: ratio,
  clientPollMode: true
  })
  }],
  stream: true
  };
- const res = await fetch(`${ORIGIN}/v1/chat/completions`, {
+ const res = await fetch(ORIGIN + '/v1/chat/completions', {
  method: 'POST',
  headers: { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' },
  body: JSON.stringify(payload)
@@ -730,12 +731,13 @@ function handleUI(request, apiKey) {
  if (currentProgress <80) currentProgress +=80 /30;
  else if (currentProgress <99) currentProgress +=0.5;
  if (currentProgress >99) currentProgress =99;
- fill.style.width = `${currentProgress}%`;
- statusDiv.innerText = `${strings.statuses.processing} ${Math.floor(currentProgress)}%`;
+ fill.style.width = currentProgress + '%';
+ statusDiv.innerText = (strings.statuses.processing + ' ' + Math.floor(currentProgress) + '%').trim();
  },500);
+ if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
  pollTimer = setInterval(async () => {
  try {
- const pollRes = await fetch(`${ORIGIN}/v1/query/status?taskId=${taskId}&uniqueId=${uniqueId}`, {
+ const pollRes = await fetch(ORIGIN + '/v1/query/status?taskId=' + taskId + '&uniqueId=' + uniqueId, {
  headers: { 'Authorization': 'Bearer ' + API_KEY }
  });
  const statusData = await pollRes.json();
@@ -745,8 +747,8 @@ function handleUI(request, apiKey) {
  clearInterval(fakeProgressTimer);
  fakeProgressTimer = null;
  fill.style.width = '100%';
- statusDiv.innerHTML = `<strong>✅ ${strings.statuses.completed}</strong>`;
- aiMsg.innerHTML += `<video src="${statusData.videoUrl}" controls autoplay loop></video><a href="${statusData.videoUrl}" target="_blank" class="download-link">⬇️ ${strings.logActions}</a>`;
+ statusDiv.innerHTML = '<strong>✅ ' + strings.statuses.completed + '</strong>';
+ aiMsg.innerHTML += '<video src="' + statusData.videoUrl + '" controls autoplay loop></video><a href="' + statusData.videoUrl + '" target="_blank" class="download-link">⬇️ ' + strings.logActions + '</a>';
  updateLogEntry(logId, { status: 'completed', videoUrl: statusData.videoUrl, customMessage: strings.logMessages.completed });
  btn.disabled = false;
  btn.innerText = strings.buttonLabel;
@@ -755,13 +757,13 @@ function handleUI(request, apiKey) {
  pollTimer = null;
  clearInterval(fakeProgressTimer);
  fakeProgressTimer = null;
- statusDiv.innerHTML = `<span style="color:#CF6679">❌ ${strings.statuses.failed}: ${statusData.error || strings.requestError}</span>`;
+ statusDiv.innerHTML = '<span style="color:#CF6679">❌ ' + strings.statuses.failed + ': ' + (statusData.error || strings.requestError) + '</span>';
  updateLogEntry(logId, { status: 'failed', customMessage: statusData.error || strings.requestError });
  btn.disabled = false;
  btn.innerText = strings.buttonLabel;
  } else {
- const percent = statusData.progress ? `${Math.floor(statusData.progress)}%` : '';
- statusDiv.innerText = `${strings.statuses.processing} ${percent}`.trim();
+ const percent = statusData.progress ? Math.floor(statusData.progress) + '%' : '';
+ statusDiv.innerText = (strings.statuses.processing + ' ' + percent).trim();
  updateLogEntry(logId, { status: 'processing', customMessage: strings.logMessages.processing });
  }
  } catch (e) {
@@ -770,7 +772,7 @@ function handleUI(request, apiKey) {
  },2000);
  } catch (e) {
  if (fakeProgressTimer) { clearInterval(fakeProgressTimer); fakeProgressTimer = null; }
- statusDiv.innerHTML = `<span style="color:#CF6679">❌ ${strings.requestError}: ${e.message}</span>`;
+ statusDiv.innerHTML = '<span style="color:#CF6679">❌ ' + strings.requestError + ': ' + e.message + '</span>';
  updateLogEntry(logId, { status: 'failed', customMessage: e.message || strings.requestError });
  btn.disabled = false;
  btn.innerText = strings.buttonLabel;
@@ -782,6 +784,7 @@ function handleUI(request, apiKey) {
  </script>
 </body>
 </html>`;
+
  return new Response(html, {
  headers: { 'Content-Type': 'text/html; charset=utf-8' }
  });
