@@ -1096,6 +1096,44 @@ padding: 30px;
 color: var(--text-muted);
 }
 
+/* ===== 分享下拉選單 ===== */
+.share-dropdown-wrapper {
+position: relative;
+flex: 1;
+}
+.share-dropdown {
+display: none;
+position: absolute;
+bottom: 100%;
+right: 0;
+background: var(--card-bg);
+border: 1px solid var(--border-color);
+border-radius: 8px;
+box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+min-width: 140px;
+z-index: 100;
+overflow: hidden;
+}
+.share-dropdown.show {
+display: block;
+animation: fadeInUp 0.2s ease;
+}
+.share-dropdown button {
+display: block;
+width: 100%;
+padding: 10px 14px;
+text-align: left;
+background: transparent;
+border: none;
+color: var(--text-color);
+cursor: pointer;
+font-size: 12px;
+transition: background 0.2s;
+}
+.share-dropdown button:hover {
+background: var(--hover-bg);
+}
+
 /* ===== 狀態指示器 ===== */
 .status-indicator {
 display: flex;
@@ -1372,7 +1410,15 @@ uploadSuccess: '✅ 上傳成功',
 uploadError: '上傳失敗',
 pleaseUploadImage: '請先上傳圖片',
 pleaseUploadVideo: '請先上傳影片',
-uploading: '上傳中...'
+uploading: '上傳中...',
+extendVideo: '🎬 延長',
+shareVideo: '🔗 分享',
+copyLink: '複製連結',
+linkCopied: '✅ 連結已複製',
+shareToTwitter: '分享到 Twitter',
+shareToFacebook: '分享到 Facebook',
+shareToWeChat: '分享到微信',
+generatingExtend: '正在延長影片...'
 },
 en: {
 apiInfo: 'API Information',
@@ -1431,7 +1477,15 @@ uploadSuccess: '✅ Upload successful',
 uploadError: 'Upload failed',
 pleaseUploadImage: 'Please upload an image first',
 pleaseUploadVideo: 'Please upload a video first',
-uploading: 'Uploading...'
+uploading: 'Uploading...',
+extendVideo: '🎬 Extend',
+shareVideo: '🔗 Share',
+copyLink: 'Copy Link',
+linkCopied: '✅ Link Copied',
+shareToTwitter: 'Share to Twitter',
+shareToFacebook: 'Share to Facebook',
+shareToWeChat: 'Share to WeChat',
+generatingExtend: 'Extending video...'
 }
 };
 
@@ -1521,9 +1575,55 @@ return '<div class="history-item">' +
 '<div class="history-info">' +
 '<div class="history-prompt">' + (h.prompt.length > 50 ? h.prompt.substring(0, 50) + '...' : h.prompt) + '</div>' +
 '<div class="history-meta"><span class="history-tag">' + typeIcon + '</span><span class="history-tag">' + h.mode + '</span><span class="history-tag">' + h.ratio + '</span><span class="history-time">' + dateStr + '</span></div>' +
-'<div class="history-actions"><a href="' + h.videoUrl + '" target="_blank" class="btn btn-secondary btn-small">' + t.downloadVideo + '</a><button class="btn btn-secondary btn-small" onclick="deleteHistoryItem(' + i + ')">' + t.deleteVideo + '</button></div>' +
+'<div class="history-actions"><a href="' + h.videoUrl + '" target="_blank" class="btn btn-secondary btn-small">' + t.downloadVideo + '</a><button class="btn btn-secondary btn-small" onclick="extendFromHistory(\'' + h.videoUrl + '\', \'' + (h.prompt || '').replace(/'/g, "\\'").replace(/"/g, '\\"') + '\')">' + t.extendVideo + '</button><div class="share-dropdown-wrapper"><button class="btn btn-secondary btn-small" onclick="toggleShareMenu(' + i + ')">' + t.shareVideo + '</button><div class="share-dropdown" id="share-menu-' + i + '"><button onclick="copyVideoLink(\'' + h.videoUrl + '\')">' + t.copyLink + '</button><button onclick="shareToTwitter(\'' + h.videoUrl + '\', \'' + (h.prompt || '').replace(/'/g, "\\'").replace(/"/g, '\\"') + '\')">' + t.shareToTwitter + '</button><button onclick="shareToFacebook(\'' + h.videoUrl + '\')">' + t.shareToFacebook + '</button></div></div><button class="btn btn-secondary btn-small" onclick="deleteHistoryItem(' + i + ')">' + t.deleteVideo + '</button></div>' +
 '</div></div>';
 }).join('');
+}
+
+// ===== 影片延長功能 =====
+function extendFromHistory(videoUrl, prompt) {
+	currentVideoType = 'video-extend';
+	updateVideoTypeUI();
+	currentUploadUrl = videoUrl;
+	showVideoPreview(videoUrl);
+	document.getElementById('prompt').value = prompt || '';
+	document.getElementById('prompt').focus();
+	document.getElementById('prompt').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ===== 分享功能 =====
+function toggleShareMenu(index) {
+	document.querySelectorAll('.share-dropdown').forEach((menu, i) => {
+		if (i !== index) menu.classList.remove('show');
+	});
+	const menu = document.getElementById('share-menu-' + index);
+	menu.classList.toggle('show');
+}
+
+function copyVideoLink(videoUrl) {
+	const t = i18n[currentLang];
+	navigator.clipboard.writeText(videoUrl).then(() => {
+		alert(t.linkCopied);
+	}).catch(() => {
+		const textarea = document.createElement('textarea');
+		textarea.value = videoUrl;
+		document.body.appendChild(textarea);
+		textarea.select();
+		document.execCommand('copy');
+		document.body.removeChild(textarea);
+		alert(t.linkCopied);
+	});
+}
+
+function shareToTwitter(videoUrl, prompt) {
+	const text = encodeURIComponent((prompt || 'AI Generated Video') + ' #AIVideo #Ximagine');
+	const url = encodeURIComponent(videoUrl);
+	window.open('https://twitter.com/intent/tweet?text=' + text + '&url=' + url, '_blank');
+}
+
+function shareToFacebook(videoUrl) {
+	const url = encodeURIComponent(videoUrl);
+	window.open('https://www.facebook.com/sharer/sharer.php?u=' + url, '_blank');
 }
 
 // ===== 語言切換 =====
