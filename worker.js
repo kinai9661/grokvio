@@ -1,6 +1,6 @@
 // =================================================================================
 // 项目: ximagine-2api (Cloudflare Worker 单文件版)
-// 版本: 2.4.0 (代号: Chimera Synthesis - Premium UI Edition)
+// 版本: 2.5.0 (代号: Chimera Synthesis - Multi-Modal Edition)
 // 作者: 首席AI执行官 (Principal AI Executive Officer)
 // 协议: 奇美拉协议 · 综合版 (Project Chimera: Synthesis Edition)
 // 日期: 2025-11-24
@@ -15,12 +15,13 @@
 // 7. [历史] 本地保存生成记录，支持查看与下载。
 // 8. [主题] 支持深色/浅色主题切换。
 // 9. [模板] 内置快速提示词模板。
+// 10. [多模态] 支持图片生成视频、视频延长功能。
 // =================================================================================
 
 // --- [第一部分: 核心配置 (Configuration-as-Code)] ---
 const CONFIG = {
 PROJECT_NAME: "ximagine-2api",
-PROJECT_VERSION: "2.4.0",
+PROJECT_VERSION: "2.5.0",
 
 // ⚠️ 安全配置: 请在 Cloudflare 环境变量中设置 API_MASTER_KEY
 API_MASTER_KEY: "1",
@@ -28,6 +29,12 @@ API_MASTER_KEY: "1",
 // 上游服务配置
 API_BASE: "https://api.ximagine.io/aimodels/api/v1",
 ORIGIN_URL: "https://ximagine.io",
+
+// 文件上传配置
+UPLOAD_URL: "https://bkdsuattzwucejyqdgsg.supabase.co/functions/v1/api/upload",
+MAX_FILE_SIZE: 50 * 1024 * 1024, // 50MB
+SUPPORTED_IMAGE_TYPES: ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"],
+SUPPORTED_VIDEO_TYPES: ["video/mp4", "video/webm"],
 
 // 模型配置 (映射到上游的 mode 参数)
 MODEL_MAP: {
@@ -44,27 +51,31 @@ POLLING_TIMEOUT: 120000, // 2分钟超时
 
 // --- [第二部分: Worker 入口与路由] ---
 export default {
-async fetch(request, env, ctx) {
-const apiKey = env.API_MASTER_KEY || CONFIG.API_MASTER_KEY;
-const url = new URL(request.url);
+  async fetch(request, env, ctx) {
+    const apiKey = env.API_MASTER_KEY || CONFIG.API_MASTER_KEY;
+    const uploadApiKey = env.UPLOAD_API_KEY || apiKey; // 上傳服務使用獨立 API KEY，若未設定則使用主 API KEY
+    const url = new URL(request.url);
 
-// 1. 全局 CORS 预检
-if (request.method === 'OPTIONS') return handleCorsPreflight();
+    // 1. 全局 CORS 预检
+    if (request.method === 'OPTIONS') return handleCorsPreflight();
 
-// 2. 开发者驾驶舱 (Web UI)
-if (url.pathname === '/') return handleUI(request, apiKey);
+    // 2. 开发者驾驶舱 (Web UI)
+    if (url.pathname === '/') return handleUI(request, apiKey);
 
-// 3. 聊天接口 (核心生成逻辑 - 兼容 OpenAI)
-if (url.pathname === '/v1/chat/completions') return handleChatCompletions(request, apiKey);
+    // 3. 聊天接口 (核心生成逻辑 - 兼容 OpenAI)
+    if (url.pathname === '/v1/chat/completions') return handleChatCompletions(request, apiKey);
 
-// 4. 模型列表
-if (url.pathname === '/v1/models') return handleModelsRequest();
+    // 4. 模型列表
+    if (url.pathname === '/v1/models') return handleModelsRequest();
 
-// 5. 状态查询 (WebUI 客户端轮询专用)
-if (url.pathname === '/v1/query/status') return handleStatusQuery(request, apiKey);
+    // 5. 状态查询 (WebUI 客户端轮询专用)
+    if (url.pathname === '/v1/query/status') return handleStatusQuery(request, apiKey);
 
-return createErrorResponse(`未找到路径: ${url.pathname}`, 404, 'not_found');
-}
+    // 6. 文件上传代理
+    if (url.pathname === '/v1/upload') return handleUpload(request, apiKey, uploadApiKey);
+
+    return createErrorResponse(`未找到路径: ${url.pathname}`, 404, 'not_found');
+  }
 };
 
 // --- [第三部分: 核心业务逻辑] ---
@@ -98,7 +109,7 @@ return {
 /**
 * 核心：执行视频生成任务
 */
-async function performGeneration(prompt, aspectRatio, mode, onProgress, clientPollMode = false) {
+async function performGeneration(prompt, aspectRatio, mode, onProgress, clientPollMode = false, options = {}) {
 const uniqueId = generateUniqueId();
 const headers = getCommonHeaders(uniqueId);
 
@@ -109,20 +120,31 @@ if (!validRatios.includes(finalRatio)) {
 finalRatio = "1:1";
 }
 
+// 获取生成类型
+const videoType = options.videoType || 'text-to-video';
+const imageUrls = options.imageUrls || [];
+const videoUrl = options.videoUrl || null;
+
 const payload = {
 "prompt": prompt,
 "channel": "GROK_IMAGINE",
 "pageId": 886,
 "source": "ximagine.io",
-"watermarkFlag": true, // [关键] 必须为 true，否则上游可能静默失败
+"watermarkFlag": true,
 "privateFlag": false,
 "isTemp": true,
 "model": "grok-imagine",
-"videoType": "text-to-video",
+"videoType": videoType,
 "mode": mode || "normal",
 "aspectRatio": finalRatio,
-"imageUrls": []
+"imageUrls": imageUrls
 };
+
+// 如果是视频延长，添加视频URL
+if (videoType === 'video-extend' && videoUrl) {
+payload.videoUrl = videoUrl;
+payload.extendDuration = options.extendDuration || 5;
+}
 
 if (onProgress) await onProgress({ status: 'submitting', message: `正在提交任务 (${mode}模式, ${finalRatio})...` });
 
@@ -151,7 +173,7 @@ return { mode: 'async', taskId: taskId, uniqueId: uniqueId };
 
 // [API 模式] 后端轮询
 const startTime = Date.now();
-let videoUrl = null;
+let videoUrlResult = null;
 
 while (Date.now() - startTime < CONFIG.POLLING_TIMEOUT) {
 const pollRes = await fetch(`${CONFIG.API_BASE}/ai/${taskId}?channel=GROK_IMAGINE`, {
@@ -170,10 +192,9 @@ if (data.completeData) {
 try {
 const innerData = JSON.parse(data.completeData);
 if (innerData.code === 200 && innerData.data && innerData.data.result_urls && innerData.data.result_urls.length > 0) {
-videoUrl = innerData.data.result_urls[0];
+videoUrlResult = innerData.data.result_urls[0];
 break;
 } else {
-// 任务完成但无 URL，通常是敏感词拦截
 throw new Error(`生成被拦截或失败: ${JSON.stringify(innerData)}`);
 }
 } catch (e) {
@@ -185,16 +206,75 @@ throw new Error(`生成失败: ${data.failMsg}`);
 }
 
 if (onProgress) {
-// 后端轮询时，简单返回处理中
 await onProgress({ status: 'processing', progress: 50 });
 }
 
 await new Promise(r => setTimeout(r, CONFIG.POLLING_INTERVAL));
 }
 
-if (!videoUrl) throw new Error("生成超时或未获取到视频地址");
+if (!videoUrlResult) throw new Error("生成超时或未获取到视频地址");
 
-return { mode: 'sync', videoUrl: videoUrl };
+return { mode: 'sync', videoUrl: videoUrlResult };
+}
+
+/**
+* 处理文件上传代理
+*/
+async function handleUpload(request, apiKey, uploadApiKey) {
+  if (!verifyAuth(request, apiKey)) return createErrorResponse('Unauthorized', 401, 'unauthorized');
+
+  if (request.method !== 'POST') {
+    return createErrorResponse('Method not allowed', 405, 'method_not_allowed');
+  }
+
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file');
+
+    if (!file) {
+      return createErrorResponse('No file provided', 400, 'no_file');
+    }
+
+    // 验证文件类型
+    const isImage = CONFIG.SUPPORTED_IMAGE_TYPES.includes(file.type);
+    const isVideo = CONFIG.SUPPORTED_VIDEO_TYPES.includes(file.type);
+
+    if (!isImage && !isVideo) {
+      return createErrorResponse(`Unsupported file type: ${file.type}`, 400, 'unsupported_type');
+    }
+
+    // 验证文件大小
+    if (file.size > CONFIG.MAX_FILE_SIZE) {
+      return createErrorResponse(`File too large: ${file.size} bytes (max: ${CONFIG.MAX_FILE_SIZE})`, 400, 'file_too_large');
+    }
+
+    // 转发到上传服务
+    const uploadFormData = new FormData();
+    uploadFormData.append('file', file);
+
+    const uploadRes = await fetch(CONFIG.UPLOAD_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${uploadApiKey}`
+      },
+      body: uploadFormData
+    });
+
+if (!uploadRes.ok) {
+const errText = await uploadRes.text();
+return createErrorResponse(`Upload failed: ${errText}`, uploadRes.status, 'upload_failed');
+}
+
+const uploadData = await uploadRes.json();
+
+return new Response(JSON.stringify(uploadData), {
+status: 200,
+headers: corsHeaders({ 'Content-Type': 'application/json' })
+});
+
+} catch (e) {
+return createErrorResponse(`Upload error: ${e.message}`, 500, 'upload_error');
+}
 }
 
 /**
@@ -214,6 +294,7 @@ let mode = CONFIG.MODEL_MAP[reqModel] || "normal";
 let prompt = lastMsg;
 let aspectRatio = "1:1";
 let clientPollMode = false;
+let options = {};
 
 try {
 if (lastMsg.trim().startsWith('{') && lastMsg.includes('prompt')) {
@@ -222,6 +303,10 @@ prompt = parsed.prompt || prompt;
 if (parsed.aspectRatio) aspectRatio = parsed.aspectRatio;
 if (parsed.clientPollMode) clientPollMode = true;
 if (parsed.mode) mode = parsed.mode;
+if (parsed.videoType) options.videoType = parsed.videoType;
+if (parsed.imageUrls) options.imageUrls = parsed.imageUrls;
+if (parsed.videoUrl) options.videoUrl = parsed.videoUrl;
+if (parsed.extendDuration) options.extendDuration = parsed.extendDuration;
 }
 } catch (e) {}
 
@@ -237,7 +322,7 @@ if (!clientPollMode && body.stream) {
 if (info.status === 'submitting') await sendSSE(writer, encoder, requestId, "正在提交任务至 Ximagine...\n");
 else if (info.status === 'processing') await sendSSE(writer, encoder, requestId, `[PROGRESS]${info.progress}%[/PROGRESS]`);
 }
-}, clientPollMode);
+}, clientPollMode, options);
 
 if (result.mode === 'async') {
 await sendSSE(writer, encoder, requestId, `[TASK_ID:${result.taskId}|UID:${result.uniqueId}]`);
@@ -291,9 +376,7 @@ if (inner.data && inner.data.result_urls && inner.data.result_urls.length > 0) {
 result.status = 'completed';
 result.videoUrl = inner.data.result_urls[0];
 } else {
-// [关键修复] 捕获无 URL 的情况，返回上游原始信息供调试
 result.status = 'failed';
-// 尝试提取错误信息，如果 inner.data 为空，可能被拦截
 const debugInfo = JSON.stringify(inner).substring(0, 200);
 result.error = `生成完成但无视频 (可能触发敏感词拦截): ${debugInfo}`;
 }
@@ -305,7 +388,6 @@ result.error = "解析响应数据失败: " + e.message;
 result.status = 'failed';
 result.error = data.data.failMsg;
 } else {
-// 进度处理
 result.progress = data.data.progress ? Math.floor(parseFloat(data.data.progress) * 100) : 0;
 }
 }
@@ -358,7 +440,7 @@ model: CONFIG.DEFAULT_MODEL, choices: [{ index: 0, delta: { content }, finish_re
 await writer.write(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
 }
 
-// --- [第四部分: 开发者驾驶舱 UI (Premium Edition)] ---
+// --- [第四部分: 开发者驾驶舱 UI (Multi-Modal Edition)] ---
 function handleUI(request, apiKey) {
 const origin = new URL(request.url).origin;
 const html = `<!DOCTYPE html>
@@ -389,7 +471,6 @@ const html = `<!DOCTYPE html>
 --warning: #f59e0b;
 }
 
-/* 淺色主題 */
 body.light-theme {
 --bg: #f5f5fa;
 --bg-gradient-start: #f5f5fa;
@@ -406,7 +487,6 @@ body.light-theme {
 --primary-glow: rgba(79, 70, 229, 0.3);
 }
 
-/* ===== 基礎樣式 ===== */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
 font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -454,7 +534,6 @@ align-items: center;
 gap: 15px;
 }
 
-/* ===== 語言與主題選擇器 ===== */
 .selector-group {
 display: flex;
 gap: 10px;
@@ -491,7 +570,7 @@ width: 100%;
 
 /* ===== 側邊欄 ===== */
 .sidebar {
-width: 340px;
+width: 380px;
 display: flex;
 flex-direction: column;
 gap: 15px;
@@ -515,7 +594,7 @@ border-color: rgba(99, 102, 241, 0.3);
 .card-title {
 font-size: 13px;
 color: var(--text-muted);
-margin-bottom: 10px;
+margin-bottom: 12px;
 text-transform: uppercase;
 letter-spacing: 0.5px;
 }
@@ -531,9 +610,7 @@ display: flex;
 align-items: center;
 gap: 8px;
 }
-.api-icon {
-font-size: 16px;
-}
+.api-icon { font-size: 16px; }
 .api-url-box {
 display: flex;
 align-items: center;
@@ -589,12 +666,10 @@ box-shadow: 0 0 20px var(--primary-glow);
 }
 textarea {
 resize: vertical;
-min-height: 100px;
+min-height: 80px;
 line-height: 1.5;
 }
-select {
-cursor: pointer;
-}
+select { cursor: pointer; }
 
 /* ===== 按鈕 ===== */
 .btn {
@@ -620,9 +695,7 @@ box-shadow: 0 4px 20px var(--primary-glow);
 transform: translateY(-2px);
 box-shadow: 0 8px 30px var(--primary-glow);
 }
-.btn-primary:active:not(:disabled) {
-transform: translateY(0);
-}
+.btn-primary:active:not(:disabled) { transform: translateY(0); }
 .btn-primary:disabled {
 background: #4a4a5a;
 color: #888;
@@ -645,8 +718,135 @@ font-size: 12px;
 width: auto;
 }
 
+/* ===== 生成模式選擇 ===== */
+.mode-tabs {
+display: flex;
+gap: 8px;
+margin-bottom: 15px;
+}
+.mode-tab {
+flex: 1;
+padding: 12px 8px;
+background: rgba(0, 0, 0, 0.2);
+border: 1px solid var(--border-solid);
+border-radius: 10px;
+color: var(--text-muted);
+font-size: 12px;
+cursor: pointer;
+transition: all 0.3s ease;
+display: flex;
+flex-direction: column;
+align-items: center;
+gap: 6px;
+}
+.mode-tab:hover {
+background: rgba(99, 102, 241, 0.1);
+border-color: var(--primary);
+}
+.mode-tab.active {
+background: rgba(99, 102, 241, 0.2);
+border-color: var(--primary);
+color: var(--text);
+}
+.mode-tab-icon { font-size: 24px; }
+
+/* ===== 上傳區域 ===== */
+.upload-section { margin-top: 10px; }
+.upload-dropzone {
+border: 2px dashed var(--border-solid);
+border-radius: 12px;
+padding: 30px 20px;
+text-align: center;
+transition: all 0.3s ease;
+cursor: pointer;
+background: rgba(0, 0, 0, 0.1);
+position: relative;
+}
+.upload-dropzone:hover,
+.upload-dropzone.dragover {
+border-color: var(--primary);
+background: rgba(99, 102, 241, 0.1);
+}
+.dropzone-icon {
+font-size: 40px;
+margin-bottom: 10px;
+opacity: 0.5;
+}
+.dropzone-text {
+font-size: 13px;
+color: var(--text-muted);
+margin-bottom: 8px;
+}
+.dropzone-hint {
+font-size: 11px;
+color: var(--text-muted);
+opacity: 0.7;
+}
+
+/* ===== 預覽區域 ===== */
+.preview-section { margin-top: 15px; }
+.preview-container {
+background: rgba(0, 0, 0, 0.2);
+border-radius: 12px;
+padding: 15px;
+display: flex;
+align-items: center;
+gap: 15px;
+border: 1px solid var(--border);
+}
+.preview-media {
+max-width: 120px;
+max-height: 80px;
+border-radius: 8px;
+object-fit: cover;
+}
+.preview-info {
+flex: 1;
+display: flex;
+flex-direction: column;
+gap: 4px;
+min-width: 0;
+}
+.preview-filename {
+font-weight: 500;
+font-size: 13px;
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+}
+.preview-filesize {
+font-size: 11px;
+color: var(--text-muted);
+}
+.preview-remove {
+padding: 6px 12px;
+font-size: 12px;
+}
+
+/* ===== 上傳進度 ===== */
+.upload-progress {
+margin-top: 12px;
+}
+.upload-progress .progress-bar {
+height: 6px;
+background: rgba(0, 0, 0, 0.3);
+border-radius: 3px;
+overflow: hidden;
+}
+.upload-progress .progress-fill {
+height: 100%;
+background: linear-gradient(90deg, var(--primary), var(--accent));
+transition: width 0.3s ease;
+}
+.upload-progress .progress-text {
+font-size: 12px;
+color: var(--text-muted);
+margin-top: 6px;
+text-align: center;
+}
+
 /* ===== 快速模板 ===== */
-.templates-section { margin-top: 10px; }
+.templates-section { margin-top: 15px; }
 .templates-grid {
 display: grid;
 grid-template-columns: repeat(3, 1fr);
@@ -696,12 +896,12 @@ display: flex;
 flex-direction: column;
 gap: 15px;
 min-height: 300px;
-max-height: 500px;
+max-height: 450px;
 }
 .welcome-msg {
 color: var(--text-muted);
 text-align: center;
-padding: 60px 20px;
+padding: 50px 20px;
 line-height: 1.8;
 }
 .welcome-icon {
@@ -742,9 +942,7 @@ opacity: 0.7;
 }
 
 /* ===== 進度條 ===== */
-.progress-container {
-margin-top: 12px;
-}
+.progress-container { margin-top: 12px; }
 .progress-bar {
 height: 6px;
 background: rgba(0, 0, 0, 0.3);
@@ -779,7 +977,7 @@ background: #000;
 }
 .video-container video {
 width: 100%;
-max-height: 350px;
+max-height: 300px;
 display: block;
 }
 .video-actions {
@@ -787,9 +985,7 @@ display: flex;
 gap: 10px;
 margin-top: 10px;
 }
-.video-actions a {
-text-decoration: none;
-}
+.video-actions a { text-decoration: none; }
 
 /* ===== 歷史記錄面板 ===== */
 .history-panel {
@@ -814,8 +1010,8 @@ gap: 8px;
 }
 .history-grid {
 display: grid;
-grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-gap: 15px;
+grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+gap: 12px;
 }
 .history-item {
 background: rgba(0, 0, 0, 0.2);
@@ -825,8 +1021,8 @@ overflow: hidden;
 transition: all 0.3s ease;
 }
 .history-item:hover {
-transform: translateY(-3px);
-box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+transform: translateY(-2px);
+box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
 border-color: var(--primary);
 }
 .history-video {
@@ -849,24 +1045,18 @@ justify-content: center;
 opacity: 0;
 transition: opacity 0.3s ease;
 }
-.history-item:hover .history-overlay {
-opacity: 1;
-}
+.history-item:hover .history-overlay { opacity: 1; }
 .play-icon {
-font-size: 32px;
+font-size: 28px;
 cursor: pointer;
 transition: transform 0.2s ease;
 }
-.play-icon:hover {
-transform: scale(1.2);
-}
-.history-info {
-padding: 12px;
-}
+.play-icon:hover { transform: scale(1.2); }
+.history-info { padding: 10px; }
 .history-prompt {
-font-size: 13px;
+font-size: 12px;
 color: var(--text);
-margin-bottom: 8px;
+margin-bottom: 6px;
 display: -webkit-box;
 -webkit-line-clamp: 2;
 -webkit-box-orient: vertical;
@@ -875,32 +1065,34 @@ overflow: hidden;
 .history-meta {
 display: flex;
 flex-wrap: wrap;
-gap: 6px;
-margin-bottom: 10px;
+gap: 4px;
+margin-bottom: 8px;
+align-items: center;
 }
 .history-tag {
-font-size: 11px;
-padding: 3px 8px;
+font-size: 10px;
+padding: 2px 6px;
 background: rgba(99, 102, 241, 0.2);
 color: var(--primary);
 border-radius: 4px;
 }
 .history-time {
-font-size: 11px;
+font-size: 10px;
 color: var(--text-muted);
+margin-left: auto;
 }
 .history-actions {
 display: flex;
-gap: 8px;
+gap: 6px;
 }
 .history-actions button {
 flex: 1;
-padding: 8px;
-font-size: 12px;
+padding: 6px;
+font-size: 11px;
 }
 .history-empty {
 text-align: center;
-padding: 40px;
+padding: 30px;
 color: var(--text-muted);
 }
 
@@ -930,13 +1122,15 @@ animation: statusPulse 2s infinite;
 @media (max-width: 900px) {
 .container { flex-direction: column; }
 .sidebar { width: 100%; }
-.chat-window { max-height: 400px; }
-.history-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.chat-window { max-height: 350px; }
+.history-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 }
 @media (max-width: 600px) {
 .topbar { flex-direction: column; gap: 10px; }
 .container { padding: 10px; }
 .templates-grid { grid-template-columns: repeat(2, 1fr); }
+.mode-tabs { flex-wrap: wrap; }
+.mode-tab { min-width: calc(50% - 4px); }
 }
 
 /* ===== 滾動條樣式 ===== */
@@ -947,7 +1141,6 @@ animation: statusPulse 2s infinite;
 </style>
 </head>
 <body>
-<!-- 頂部導航列 -->
 <nav class="topbar">
 <div class="logo">
 <span class="logo-icon">🎬</span>
@@ -972,11 +1165,8 @@ animation: statusPulse 2s infinite;
 </div>
 </nav>
 
-<!-- 主容器 -->
 <div class="container">
-<!-- 側邊欄 -->
 <aside class="sidebar">
-<!-- API 資訊卡片 -->
 <div class="card">
 <div class="card-title" data-i18n="apiInfo">API 資訊</div>
 <div class="api-card">
@@ -1001,9 +1191,48 @@ animation: statusPulse 2s infinite;
 </div>
 </div>
 
-<!-- 生成控制卡片 -->
 <div class="card">
 <div class="card-title" data-i18n="generateSettings">生成設定</div>
+<div class="mode-tabs">
+<div class="mode-tab active" onclick="setVideoType('text-to-video')" id="mode-text">
+<span class="mode-tab-icon">📝</span>
+<span data-i18n="typeTextToVideo">文字</span>
+</div>
+<div class="mode-tab" onclick="setVideoType('image-to-video')" id="mode-image">
+<span class="mode-tab-icon">📷</span>
+<span data-i18n="typeImageToVideo">圖片</span>
+</div>
+<div class="mode-tab" onclick="setVideoType('video-extend')" id="mode-video">
+<span class="mode-tab-icon">🎬</span>
+<span data-i18n="typeVideoExtend">延長</span>
+</div>
+</div>
+
+<div id="upload-section" class="upload-section" style="display:none">
+<div class="form-label" data-i18n="uploadLabel">上傳檔案</div>
+<div class="upload-dropzone" id="dropzone">
+<div class="dropzone-icon">📁</div>
+<div class="dropzone-text" data-i18n="dropFileHere">拖曳檔案至此處或點擊選擇</div>
+<div class="dropzone-hint" data-i18n="supportedFormats">支援 JPG, PNG, WEBP, GIF, AVIF, MP4, WEBM (最大 50MB)</div>
+</div>
+<input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif,video/mp4,video/webm" style="display:none">
+<div class="preview-section" id="preview-section" style="display:none">
+<div class="preview-container">
+<img id="preview-image" class="preview-media" style="display:none">
+<video id="preview-video" class="preview-media" controls style="display:none"></video>
+<div class="preview-info">
+<div class="preview-filename" id="preview-filename"></div>
+<div class="preview-filesize" id="preview-filesize"></div>
+</div>
+<button class="btn btn-secondary btn-small preview-remove" onclick="clearUpload()" data-i18n="removeFile">移除</button>
+</div>
+</div>
+<div class="upload-progress" id="upload-progress" style="display:none">
+<div class="progress-bar"><div class="progress-fill" id="upload-progress-fill"></div></div>
+<div class="progress-text" id="upload-progress-text">0%</div>
+</div>
+</div>
+
 <div class="form-group">
 <label class="form-label" data-i18n="modeLabel">風格模式</label>
 <select id="mode">
@@ -1012,6 +1241,7 @@ animation: statusPulse 2s infinite;
 <option value="spicy" data-i18n-option="modeSpicy">Spicy (火辣)</option>
 </select>
 </div>
+
 <div class="form-group">
 <label class="form-label" data-i18n="ratioLabel">影片比例</label>
 <select id="ratio">
@@ -1020,51 +1250,32 @@ animation: statusPulse 2s infinite;
 <option value="2:3" data-i18n-option="ratio2x3">2:3 (豎屏)</option>
 </select>
 </div>
+
 <div class="form-group">
 <label class="form-label" data-i18n="promptLabel">提示詞</label>
-<textarea id="prompt" rows="4" data-i18n-placeholder="promptPlaceholder" placeholder="描述影片內容..."></textarea>
+<textarea id="prompt" rows="3" data-i18n-placeholder="promptPlaceholder" placeholder="描述影片內容..."></textarea>
 </div>
+
 <button id="btn-gen" class="btn btn-primary" onclick="generate()">
 <span>✨</span>
 <span data-i18n="generateBtn">生成影片</span>
 </button>
 
-<!-- 快速模板 -->
 <div class="templates-section">
 <div class="form-label" data-i18n="quickTemplates">快速模板</div>
 <div class="templates-grid">
-<button class="template-btn" onclick="useTemplate('sunset')">
-<span class="template-icon">🌅</span>
-<span data-i18n="templateSunset">夕陽</span>
-</button>
-<button class="template-btn" onclick="useTemplate('city')">
-<span class="template-icon">🏙️</span>
-<span data-i18n="templateCity">城市</span>
-</button>
-<button class="template-btn" onclick="useTemplate('nature')">
-<span class="template-icon">🌲</span>
-<span data-i18n="templateNature">自然</span>
-</button>
-<button class="template-btn" onclick="useTemplate('ocean')">
-<span class="template-icon">🌊</span>
-<span data-i18n="templateOcean">海洋</span>
-</button>
-<button class="template-btn" onclick="useTemplate('space')">
-<span class="template-icon">🚀</span>
-<span data-i18n="templateSpace">太空</span>
-</button>
-<button class="template-btn" onclick="useTemplate('animal')">
-<span class="template-icon">🦁</span>
-<span data-i18n="templateAnimal">動物</span>
-</button>
+<button class="template-btn" onclick="useTemplate('sunset')"><span class="template-icon">🌅</span><span data-i18n="templateSunset">夕陽</span></button>
+<button class="template-btn" onclick="useTemplate('city')"><span class="template-icon">🏙️</span><span data-i18n="templateCity">城市</span></button>
+<button class="template-btn" onclick="useTemplate('nature')"><span class="template-icon">🌲</span><span data-i18n="templateNature">自然</span></button>
+<button class="template-btn" onclick="useTemplate('ocean')"><span class="template-icon">🌊</span><span data-i18n="templateOcean">海洋</span></button>
+<button class="template-btn" onclick="useTemplate('space')"><span class="template-icon">🚀</span><span data-i18n="templateSpace">太空</span></button>
+<button class="template-btn" onclick="useTemplate('animal')"><span class="template-icon">🦁</span><span data-i18n="templateAnimal">動物</span></button>
 </div>
 </div>
 </div>
 </aside>
 
-<!-- 主區域 -->
 <main class="main">
-<!-- 聊天視窗 -->
 <div class="chat-window" id="chat">
 <div class="welcome-msg" id="welcome-msg">
 <div class="welcome-icon">🎬</div>
@@ -1073,16 +1284,13 @@ animation: statusPulse 2s infinite;
 </div>
 </div>
 
-<!-- 歷史記錄面板 -->
 <div class="history-panel">
 <div class="history-header">
 <div class="history-title">
 <span>📚</span>
 <span data-i18n="historyTitle">歷史記錄</span>
 </div>
-<button class="btn btn-secondary btn-small" onclick="clearHistory()">
-<span data-i18n="clearHistory">清除歷史</span>
-</button>
+<button class="btn btn-secondary btn-small" onclick="clearHistory()" data-i18n="clearHistory">清除歷史</button>
 </div>
 <div class="history-grid" id="history-list"></div>
 </div>
@@ -1092,18 +1300,33 @@ animation: statusPulse 2s infinite;
 <script>
 const API_KEY = "${apiKey}";
 const ORIGIN = "${origin}";
+const UPLOAD_URL = "${CONFIG.UPLOAD_URL}";
+const MAX_FILE_SIZE = ${CONFIG.MAX_FILE_SIZE};
+const SUPPORTED_IMAGE_TYPES = ${JSON.stringify(CONFIG.SUPPORTED_IMAGE_TYPES)};
+const SUPPORTED_VIDEO_TYPES = ${JSON.stringify(CONFIG.SUPPORTED_VIDEO_TYPES)};
+
 let pollTimer = null;
 let fakeProgressTimer = null;
 let currentLang = localStorage.getItem('lang') || (navigator.language.startsWith('zh') ? 'zh' : 'en');
 let currentTheme = localStorage.getItem('theme') || 'dark';
+let currentVideoType = 'text-to-video';
+let currentUploadUrl = null;
+let currentUploadType = null;
 
-// ===== i18n 多語系 =====
+// ===== i18n =====
 const i18n = {
 zh: {
 apiInfo: 'API 資訊',
 apiKey: 'API 金鑰',
 apiEndpoint: 'API 端點',
 generateSettings: '生成設定',
+typeTextToVideo: '文字',
+typeImageToVideo: '圖片',
+typeVideoExtend: '延長',
+uploadLabel: '上傳檔案',
+dropFileHere: '拖曳檔案至此處或點擊選擇',
+supportedFormats: '支援 JPG, PNG, WEBP, GIF, AVIF, MP4, WEBM (最大 50MB)',
+removeFile: '移除',
 modeLabel: '風格模式',
 modeNormal: 'Normal (標準)',
 modeFun: 'Fun (趣味)',
@@ -1142,13 +1365,27 @@ noHistory: '暫無歷史記錄',
 statusIdle: '就緒',
 statusGenerating: '生成中',
 statusSuccess: '完成',
-statusError: '錯誤'
+statusError: '錯誤',
+unsupportedFileType: '不支援的檔案類型',
+fileTooLarge: '檔案超過 50MB 限制',
+uploadSuccess: '✅ 上傳成功',
+uploadError: '上傳失敗',
+pleaseUploadImage: '請先上傳圖片',
+pleaseUploadVideo: '請先上傳影片',
+uploading: '上傳中...'
 },
 en: {
 apiInfo: 'API Information',
 apiKey: 'API Key',
 apiEndpoint: 'API Endpoint',
 generateSettings: 'Generation Settings',
+typeTextToVideo: 'Text',
+typeImageToVideo: 'Image',
+typeVideoExtend: 'Extend',
+uploadLabel: 'Upload File',
+dropFileHere: 'Drop file here or click to select',
+supportedFormats: 'Supports JPG, PNG, WEBP, GIF, AVIF, MP4, WEBM (max 50MB)',
+removeFile: 'Remove',
 modeLabel: 'Style Mode',
 modeNormal: 'Normal (Standard)',
 modeFun: 'Fun (Playful)',
@@ -1187,11 +1424,18 @@ noHistory: 'No history yet',
 statusIdle: 'Ready',
 statusGenerating: 'Generating',
 statusSuccess: 'Done',
-statusError: 'Error'
+statusError: 'Error',
+unsupportedFileType: 'Unsupported file type',
+fileTooLarge: 'File exceeds 50MB limit',
+uploadSuccess: '✅ Upload successful',
+uploadError: 'Upload failed',
+pleaseUploadImage: 'Please upload an image first',
+pleaseUploadVideo: 'Please upload a video first',
+uploading: 'Uploading...'
 }
 };
 
-// ===== 快速模板 =====
+// ===== 模板 =====
 const templates = {
 sunset: { zh: '夕陽下的海邊，金色的光芒灑在波浪上，海鷗飛過天空', en: 'Sunset by the beach, golden light on the waves, seagulls flying across the sky' },
 city: { zh: '繁華的城市夜景，霓虹燈閃爍，車流如織，摩天大樓林立', en: 'Bustling city night view, neon lights flashing, heavy traffic, skyscrapers everywhere' },
@@ -1202,9 +1446,26 @@ animal: { zh: '非洲草原上，獅子在夕陽下漫步，長頸鹿在遠處�
 };
 
 function useTemplate(key) {
-const prompt = document.getElementById('prompt');
-prompt.value = templates[key][currentLang] || templates[key]['zh'];
-prompt.focus();
+document.getElementById('prompt').value = templates[key][currentLang] || templates[key]['zh'];
+document.getElementById('prompt').focus();
+}
+
+// ===== 生成模式切換 =====
+function setVideoType(type) {
+currentVideoType = type;
+document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+document.getElementById('mode-' + type.split('-')[0]).classList.add('active');
+const uploadSection = document.getElementById('upload-section');
+if (type === 'text-to-video') {
+uploadSection.style.display = 'none';
+} else {
+uploadSection.style.display = 'block';
+const dropzone = document.getElementById('dropzone');
+dropzone.style.display = 'block';
+document.getElementById('preview-section').style.display = 'none';
+document.getElementById('upload-progress').style.display = 'none';
+clearUpload();
+}
 }
 
 // ===== 主題切換 =====
@@ -1215,14 +1476,13 @@ document.body.classList.toggle('light-theme', theme === 'light');
 document.getElementById('theme-select').value = theme;
 }
 
-// ===== 歷史記錄管理 =====
+// ===== 歷史記錄 =====
 const HISTORY_KEY = 'ximagineHistory';
 const MAX_HISTORY = 20;
 
 function getHistory() {
-try {
-return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
-} catch { return []; }
+try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+catch { return []; }
 }
 
 function saveHistory(item) {
@@ -1249,32 +1509,20 @@ function renderHistory() {
 const container = document.getElementById('history-list');
 const history = getHistory();
 const t = i18n[currentLang];
-
 if (history.length === 0) {
 container.innerHTML = '<div class="history-empty">' + t.noHistory + '</div>';
 return;
 }
-
 container.innerHTML = history.map((h, i) => {
 const dateStr = new Date(h.timestamp).toLocaleString(currentLang === 'zh' ? 'zh-TW' : 'en-US');
+const typeIcon = h.videoType === 'image-to-video' ? '📷' : h.videoType === 'video-extend' ? '🎬' : '📝';
 return '<div class="history-item">' +
-'<div class="history-video">' +
-'<video src="' + h.videoUrl + '" muted loop></video>' +
-'<div class="history-overlay"><span class="play-icon">▶️</span></div>' +
-'</div>' +
+'<div class="history-video"><video src="' + h.videoUrl + '" muted loop></video><div class="history-overlay"><span class="play-icon">▶️</span></div></div>' +
 '<div class="history-info">' +
-'<div class="history-prompt">' + (h.prompt.length > 60 ? h.prompt.substring(0, 60) + '...' : h.prompt) + '</div>' +
-'<div class="history-meta">' +
-'<span class="history-tag">' + h.mode + '</span>' +
-'<span class="history-tag">' + h.ratio + '</span>' +
-'<span class="history-time">' + dateStr + '</span>' +
-'</div>' +
-'<div class="history-actions">' +
-'<a href="' + h.videoUrl + '" target="_blank" class="btn btn-secondary btn-small">' + t.downloadVideo + '</a>' +
-'<button class="btn btn-secondary btn-small" onclick="deleteHistoryItem(' + i + ')">' + t.deleteVideo + '</button>' +
-'</div>' +
-'</div>' +
-'</div>';
+'<div class="history-prompt">' + (h.prompt.length > 50 ? h.prompt.substring(0, 50) + '...' : h.prompt) + '</div>' +
+'<div class="history-meta"><span class="history-tag">' + typeIcon + '</span><span class="history-tag">' + h.mode + '</span><span class="history-tag">' + h.ratio + '</span><span class="history-time">' + dateStr + '</span></div>' +
+'<div class="history-actions"><a href="' + h.videoUrl + '" target="_blank" class="btn btn-secondary btn-small">' + t.downloadVideo + '</a><button class="btn btn-secondary btn-small" onclick="deleteHistoryItem(' + i + ')">' + t.deleteVideo + '</button></div>' +
+'</div></div>';
 }).join('');
 }
 
@@ -1283,22 +1531,18 @@ function setLanguage(lang) {
 currentLang = lang;
 localStorage.setItem('lang', lang);
 document.getElementById('lang-select').value = lang;
-
 document.querySelectorAll('[data-i18n]').forEach(el => {
 const key = el.getAttribute('data-i18n');
 if (i18n[lang][key]) el.innerText = i18n[lang][key];
 });
-
 document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
 const key = el.getAttribute('data-i18n-placeholder');
 if (i18n[lang][key]) el.placeholder = i18n[lang][key];
 });
-
 document.querySelectorAll('[data-i18n-option]').forEach(el => {
 const key = el.getAttribute('data-i18n-option');
 if (i18n[lang][key]) el.innerText = i18n[lang][key];
 });
-
 renderHistory();
 }
 
@@ -1307,7 +1551,6 @@ function updateStatus(status) {
 const dot = document.getElementById('status-dot');
 const text = document.getElementById('status-text');
 const t = i18n[currentLang];
-
 dot.className = 'status-dot ' + status;
 switch(status) {
 case 'idle': text.innerText = t.statusIdle; break;
@@ -1315,6 +1558,136 @@ case 'generating': text.innerText = t.statusGenerating; break;
 case 'success': text.innerText = t.statusSuccess; break;
 case 'error': text.innerText = t.statusError; break;
 }
+}
+
+// ===== 檔案上傳 =====
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', (e) => {
+e.preventDefault();
+dropzone.classList.remove('dragover');
+if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+if (e.target.files.length > 0) handleFile(e.target.files[0]);
+});
+
+async function handleFile(file) {
+const t = i18n[currentLang];
+const isImage = SUPPORTED_IMAGE_TYPES.includes(file.type);
+const isVideo = SUPPORTED_VIDEO_TYPES.includes(file.type);
+
+if (!isImage && !isVideo) { alert(t.unsupportedFileType); return; }
+if (file.size > MAX_FILE_SIZE) { alert(t.fileTooLarge); return; }
+
+if (currentVideoType === 'image-to-video' && !isImage) { alert(t.pleaseUploadImage); return; }
+if (currentVideoType === 'video-extend' && !isVideo) { alert(t.pleaseUploadVideo); return; }
+
+showPreview(file);
+await uploadFile(file);
+}
+
+function showPreview(file) {
+const dropzone = document.getElementById('dropzone');
+const previewSection = document.getElementById('preview-section');
+const previewImage = document.getElementById('preview-image');
+const previewVideo = document.getElementById('preview-video');
+const previewFilename = document.getElementById('preview-filename');
+const previewFilesize = document.getElementById('preview-filesize');
+
+dropzone.style.display = 'none';
+previewSection.style.display = 'block';
+previewFilename.textContent = file.name;
+previewFilesize.textContent = formatFileSize(file.size);
+
+const isImage = file.type.startsWith('image/');
+if (isImage) {
+previewImage.style.display = 'block';
+previewVideo.style.display = 'none';
+const reader = new FileReader();
+reader.onload = (e) => previewImage.src = e.target.result;
+reader.readAsDataURL(file);
+currentUploadType = 'image';
+} else {
+previewImage.style.display = 'none';
+previewVideo.style.display = 'block';
+previewVideo.src = URL.createObjectURL(file);
+currentUploadType = 'video';
+}
+}
+
+async function uploadFile(file) {
+const t = i18n[currentLang];
+const progressSection = document.getElementById('upload-progress');
+const progressFill = document.getElementById('upload-progress-fill');
+const progressText = document.getElementById('upload-progress-text');
+
+progressSection.style.display = 'block';
+progressFill.style.width = '0%';
+progressText.textContent = t.uploading + ' 0%';
+
+try {
+const formData = new FormData();
+formData.append('file', file);
+
+const xhr = new XMLHttpRequest();
+xhr.upload.addEventListener('progress', (e) => {
+if (e.lengthComputable) {
+const percent = Math.round((e.loaded / e.total) * 100);
+progressFill.style.width = percent + '%';
+progressText.textContent = t.uploading + ' ' + percent + '%';
+}
+});
+
+xhr.addEventListener('load', () => {
+if (xhr.status === 200) {
+const data = JSON.parse(xhr.responseText);
+if (data.success) {
+currentUploadUrl = data.data.public_url;
+progressText.textContent = t.uploadSuccess;
+} else {
+throw new Error(data.error || 'Upload failed');
+}
+} else {
+throw new Error('Upload failed: ' + xhr.status);
+}
+});
+
+xhr.addEventListener('error', () => {
+alert(t.uploadError);
+progressSection.style.display = 'none';
+});
+
+xhr.open('POST', ORIGIN + '/v1/upload');
+xhr.setRequestHeader('Authorization', 'Bearer ' + API_KEY);
+xhr.send(formData);
+} catch (e) {
+console.error('Upload error:', e);
+alert(t.uploadError);
+progressSection.style.display = 'none';
+}
+}
+
+function clearUpload() {
+const dropzone = document.getElementById('dropzone');
+const previewSection = document.getElementById('preview-section');
+const progressSection = document.getElementById('upload-progress');
+dropzone.style.display = 'block';
+previewSection.style.display = 'none';
+progressSection.style.display = 'none';
+fileInput.value = '';
+currentUploadUrl = null;
+currentUploadType = null;
+}
+
+function formatFileSize(bytes) {
+if (bytes < 1024) return bytes + ' B';
+if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 // ===== 初始化 =====
@@ -1334,12 +1707,14 @@ return d;
 }
 
 async function generate() {
+const t = i18n[currentLang];
 const prompt = document.getElementById('prompt').value.trim();
 const mode = document.getElementById('mode').value;
 const ratio = document.getElementById('ratio').value;
-const t = i18n[currentLang];
 
-if (!prompt) return alert(t.enterPrompt);
+if (currentVideoType === 'image-to-video' && !currentUploadUrl) { alert(t.pleaseUploadImage); return; }
+if (currentVideoType === 'video-extend' && !currentUploadUrl) { alert(t.pleaseUploadVideo); return; }
+if (!prompt && currentVideoType === 'text-to-video') { alert(t.enterPrompt); return; }
 
 const btn = document.getElementById('btn-gen');
 btn.disabled = true;
@@ -1349,7 +1724,9 @@ updateStatus('generating');
 const welcomeMsg = document.getElementById('welcome-msg');
 if (welcomeMsg) welcomeMsg.remove();
 
-appendMsg('user', prompt + '<div class="msg-meta">[' + mode + ' | ' + ratio + ']</div>');
+const typeIcon = currentVideoType === 'image-to-video' ? '📷' : currentVideoType === 'video-extend' ? '🎬' : '📝';
+appendMsg('user', prompt + '<div class="msg-meta">' + typeIcon + ' [' + mode + ' | ' + ratio + ']</div>');
+
 const aiMsg = appendMsg('ai', '<div>' + t.initializing + '</div><div class="progress-container"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-text">0%</div></div>');
 const statusDiv = aiMsg.querySelector('div');
 const progressContainer = aiMsg.querySelector('.progress-container');
@@ -1357,6 +1734,12 @@ const fill = aiMsg.querySelector('.progress-fill');
 const progressText = aiMsg.querySelector('.progress-text');
 
 try {
+const options = {
+videoType: currentVideoType,
+imageUrls: currentVideoType === 'image-to-video' ? [currentUploadUrl] : [],
+videoUrl: currentVideoType === 'video-extend' ? currentUploadUrl : null
+};
+
 const payload = {
 model: 'grok-imagine-' + mode,
 messages: [{
@@ -1365,7 +1748,10 @@ content: JSON.stringify({
 prompt: prompt,
 mode: mode,
 aspectRatio: ratio,
-clientPollMode: true
+clientPollMode: true,
+videoType: currentVideoType,
+imageUrls: options.imageUrls,
+videoUrl: options.videoUrl
 })
 }],
 stream: true
@@ -1432,7 +1818,8 @@ btn.disabled = false;
 btn.innerHTML = '<span>✨</span><span>' + t.generateBtn + '</span>';
 updateStatus('success');
 
-saveHistory({ prompt, mode, ratio, videoUrl: statusData.videoUrl, timestamp: Date.now() });
+saveHistory({ prompt, mode, ratio, videoType: currentVideoType, videoUrl: statusData.videoUrl, timestamp: Date.now() });
+clearUpload();
 } else if (statusData.status === 'failed') {
 clearInterval(pollTimer);
 clearInterval(fakeProgressTimer);
