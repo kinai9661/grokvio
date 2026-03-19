@@ -1,10 +1,10 @@
-name = "ximagine-2api"
+name = "grokvio"
 main = "worker.js"
 compatibility_date = "2024-03-01"
 workers_dev = true
 
 [vars]
 # 覆蓋預設 API_MASTER_KEY，建議於 Cloudflare Dashboard 中設定真正的密鑰
-API_MASTER_KEY = "1"
+API_MASTER_KEY = "9661"
 # 上傳服務 API KEY (用於圖片/影片上傳認證)
 UPLOAD_API_KEY = ""
